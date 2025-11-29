@@ -8,6 +8,7 @@
     <module>client</module>
     <module>worker</module>
     <module>manager</module>
+      <module>common</module>
   </modules>
   <version>1.0-SNAPSHOT</version>
   <name>ass1</name>
