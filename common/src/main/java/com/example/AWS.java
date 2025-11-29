@@ -41,7 +41,7 @@ public class AWS {
         return instance;
     }
 
-    public String bucketName = "only-together2";
+    public String bucketName = "only-together-123";
 
 
     // S3
@@ -250,6 +250,54 @@ public class AWS {
 
         return msg.body();
     }
+
+    public  String[] receiveJob(String queueName) {
+        String queueUrl = null;
+        try {
+            queueUrl = getQueueUrl(queueName);
+        }catch (RuntimeException e){
+            System.out.println("[ERROR] couldn't recive message because - " + e.getMessage());
+            return null;
+        }
+
+
+        // 1. Receive a message with attributes
+        ReceiveMessageRequest req = ReceiveMessageRequest.builder()
+                .queueUrl(queueUrl)
+                .messageAttributeNames("All")
+                .maxNumberOfMessages(1)
+                .visibilityTimeout(30) // optional: gives you 30 seconds to process
+                .build();
+
+        ReceiveMessageResponse res = sqs.receiveMessage(req);
+
+        if (res.messages().isEmpty()) {
+            return null; // no job available
+        }
+
+        Message msg = res.messages().get(0);
+
+        // 2. Extract the file key (body)
+        String fileKey = msg.body();
+
+        // 3. Extract the response queue attribute
+        String responseQueue = null;
+        if (msg.messageAttributes().containsKey("responseQueue")) {
+            responseQueue = msg.messageAttributes()
+                    .get("responseQueue")
+                    .stringValue();
+        }
+
+        // 4. Delete the message to avoid redelivery (optional)
+        sqs.deleteMessage(DeleteMessageRequest.builder()
+                .queueUrl(queueUrl)
+                .receiptHandle(msg.receiptHandle())
+                .build());
+
+        // 5. Return as simple array
+        return new String[]{fileKey, responseQueue};
+    }
+
 
 
 

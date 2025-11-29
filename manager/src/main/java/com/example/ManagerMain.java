@@ -18,7 +18,7 @@ public class ManagerMain {
 
     //queues
     final static String inputQueueName = "inputQueue";
-    final static String outputQueueName = "outputQueue";
+    final static String outputQueueBaseName = "outputQueue";
     final static String flagsQueueName = "flagsQueue";
     final static String workersQueueName = "workersQueue";
 
@@ -26,10 +26,12 @@ public class ManagerMain {
         boolean terminate = false;
         while(!terminate){
 
-            String message = waitForResult(inputQueueName);//waits for the input file task.
+            String[] message = waitForJobResult(inputQueueName);//waits for the input file task.
+            String inputKey = message[0];
+            String outputQueueName = message[1];
             //aws.downloadFile(inputFile, inputPath);
             //aws.createSqsQueue(workersQueueName);
-            aws.sendMessage(outputQueueName, message);
+            aws.sendMessage(outputQueueName, inputKey);
 
         }
 

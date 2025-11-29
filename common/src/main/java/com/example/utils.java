@@ -10,4 +10,13 @@ public class utils {
         } while (body == null);
         return body;
     }
+
+    public static String[] waitForJobResult(String queueName) {
+        AWS aws = AWS.getInstance();
+        String[] body;
+        do {
+            body = aws.receiveJob(queueName);
+        } while (body == null);
+        return body;
+    }
 }
