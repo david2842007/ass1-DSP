@@ -128,7 +128,7 @@ class TaskState {
 
         try {
             String line = inputReader.readLine();
-            if (line == null) {
+            if (line == null || line.equals("")) {
                 sendingFinished = true;
                 inputReader.close();
             }
@@ -165,20 +165,28 @@ class TaskState {
         }
     }
 
+    public String getOutputQueueName() {
+        return outputQueueName;
+    }
+
 
 }
 
 public class ManagerMain {
 
-    final static String localPath = "/home/ec2-user/";
+    //final static String localPath = "/home/ec2-user/";
+    final static String localPath = "C:\\git\\University\\distribuited_system\\ass1-DSP\\manager\\files";
+
     final static AWS aws = AWS.getInstance();
 
     //queues
     final static String inputQueueName = "inputQueue";
     final static String outputQueueBaseName = "outputQueue";
     final static String flagsQueueName = "flagsQueue";
-    final static String workersInputQueueName = "inputWorkersQueue";
-    final static String workersOutputQueueName = "outputWorkersQueue";
+    final static String workersInputQueueName = "ass1-worker-queue";
+    final static String workersOutputQueueName = "ass1-manager-queue";
+
+
 
     static private final Map<String, TaskState> tasks = new ConcurrentHashMap<>(); //localPcs output queues name to
 
@@ -206,10 +214,15 @@ public class ManagerMain {
 
         Thread pollerThread = new Thread(() -> {
             while(!terminate){
-                String[] message = aws.receiveJobAsync(inputQueueName, 60);//waits for the input file task.
+                String[] message = aws.receiveJobAsync(inputQueueName, 1);//waits for the input file task.
+                String flag = aws.receiveOneMessage(flagsQueueName);
+                if(flag != null && flag.equals("terminate")){
+                    terminate = true;
+                }
                 if(message != null){
                     String inputKey = message[0];
                     String outputQueueName = message[1];
+                    System.out.println("[DEBUG] File name:" + inputKey + ": " + outputQueueName);
                     long timeKey = System.currentTimeMillis();
 
                     Path[] paths = createUniqueInputOutputPath();
@@ -243,7 +256,7 @@ public class ManagerMain {
                     anyActive = true;
 
                     String line = task.readNextLine();
-                    if(line != null){
+                    if(line != null && !line.equals("")){
                         aws.sendJobMessage(workersInputQueueName, line, task.outputQueueName);
                         task.linesSent.incrementAndGet();
                     }
@@ -273,18 +286,26 @@ public class ManagerMain {
                         System.err.println("[WARN] got result for unknown task " + outQueue);
                         continue;
                     }
+                    if(!isErrorLine(lineToWrite)){
+                        System.out.println("writing: " + lineToWrite +" | to outputfile " + task.outputQueueName);
+                        task.writeResultLine(lineToWrite);
+                    }else{
+                       task.linesReceived.incrementAndGet();
+                    }
+                    System.out.println("[DEBUG] Recived: "  + task.linesReceived.get()+ " lines");
 
-                    task.writeResultLine(lineToWrite);
+
 
                     if(task.sendingFinished && task.linesSent.get() == task.linesReceived.get()){
                         task.finishAndClose();
                         String fileKey = "Output" + System.currentTimeMillis() + ".txt";
                         aws.uploadFileAndNotifyPc(fileKey, task.outputPath, task.outputQueueName);
                         tasks.remove(outQueue);
+                        System.out.println("Finished writing: " + fileKey + " to outputfile " + task.outputQueueName);
                     }
                 }
             }
-            workersManager.terminateAll();
+            //workersManager.terminateAll();
 
 
         }, "collectorThread");
@@ -308,6 +329,10 @@ public class ManagerMain {
 
 
 
+    }
+
+    public static boolean isErrorLine(String s) {
+        return s == null || s.startsWith("ERROR");
     }
 
 

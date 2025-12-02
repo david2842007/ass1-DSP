@@ -24,13 +24,17 @@ public class Main {
 
         while (true) {
             // 1) Get raw job message from worker queue (e.g. "POS<TAB>https://...txt")
-            String jobMessage = aws.receiveOneMessage(WORKER_QUEUE_NAME);
+            String[] message = aws.receiveJobAsync(WORKER_QUEUE_NAME, 10);
 
-            if (jobMessage == null) {
+
+            if (message == null) {
                 System.out.println("[WORKER] No messages. Will check again...");
                 sleep(5000);
                 continue;
             }
+
+            String jobMessage = message[0];
+            String responseQueue = message[1];
 
             System.out.println("[WORKER] New job: " + jobMessage);
 
@@ -57,7 +61,7 @@ public class Main {
                 // 6) Send SUCCESS message to manager:
                 //    "<INPUT_URL>\t<OUTPUT_S3_URL>\t<ANALYSIS_TYPE>"
                 String resultMessage = job.url + "\t" + outputS3Url + "\t" + job.analysisType;
-                aws.sendMessage(MANAGER_QUEUE_NAME, resultMessage);
+                aws.sendJobMessage(MANAGER_QUEUE_NAME, resultMessage, responseQueue);
                 System.out.println("[WORKER] Sent result to manager: " + resultMessage);
 
                 // 7) Clean temp files
@@ -73,7 +77,7 @@ public class Main {
                 // "ERROR\t<ORIGINAL_JOB_MESSAGE>\t<SHORT_ERROR>"
                 String errorMessage = "ERROR\t" + jobMessage + "\t" +
                         shorten(e.toString(), 200);
-                aws.sendMessage(MANAGER_QUEUE_NAME, errorMessage);
+                aws.sendJobMessage(MANAGER_QUEUE_NAME, errorMessage, responseQueue);
                 System.out.println("[WORKER] Reported ERROR to manager: " + errorMessage);
 
                 // Then continue to next message (do NOT crash the worker)

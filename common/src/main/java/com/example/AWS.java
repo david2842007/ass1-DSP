@@ -1,5 +1,6 @@
 package com.example;
 
+import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.core.sync.ResponseTransformer;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.ec2.Ec2Client;
@@ -11,10 +12,7 @@ import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.*;
 
 import java.nio.file.Path;
-import java.util.Base64;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 public class AWS {
     private final S3Client s3;
@@ -28,7 +26,10 @@ public class AWS {
 
     private static final AWS instance = new AWS();
 
-    private HashMap<String, String> queueToUrls;
+    private final HashMap<String, String> queueToUrls;
+
+    private final String keyName = "vockey";
+    private final String instanceProfileName = "LabInstanceProfile";
 
     private AWS() {
         s3 = S3Client.builder().region(region1).build();
@@ -136,10 +137,12 @@ public class AWS {
     }
     //SQS queues.
     public void createSqsQueue(String queueName) {
+        if(queueToUrls.containsKey(queueName)) { return; }
         CreateQueueRequest createQueueRequest = CreateQueueRequest.builder()
                 .queueName(queueName)
                 .build();
         sqs.createQueue(createQueueRequest);
+
     }
 
     public String getQueueUrl(String queueName) {
@@ -194,6 +197,10 @@ public class AWS {
             System.out.println("[ERROR] couldn't send message because - " + e.getMessage());
             return false;
         }
+        System.out.println("[SQS] Sent job message to queue: " + queueUrl);
+        System.out.println("[SQS] Sent job message to file: " + fileKey);
+        System.out.println("[SQS] Sent job message to response queue: " + responseQueue);
+
 
         Map<String, MessageAttributeValue> attributes = new HashMap<>();
 
@@ -278,6 +285,31 @@ public class AWS {
         return res.reservations().get(0).instances().get(0);
     }
 
+    public void deleteQueue(String queueName) {
+        String queueUrl;
+
+        try {
+            queueUrl = getQueueUrl(queueName); // your existing helper
+        } catch (RuntimeException e) {
+            System.err.println("[ERROR] Cannot delete queue '" + queueName +
+                    "' because: " + e.getMessage());
+            return;
+        }
+
+        try {
+            DeleteQueueRequest req = DeleteQueueRequest.builder()
+                    .queueUrl(queueUrl)
+                    .build();
+
+            sqs.deleteQueue(req);
+
+            System.out.println("[DEBUG] Queue deleted: " + queueName);
+        } catch (Exception e) {
+            System.err.println("[ERROR] Failed to delete queue '" + queueName +
+                    "': " + e.getMessage());
+        }
+    }
+
     public String ensureManagerIsRunning(String managerUserDataScript) {
 
         Ec2Client ec2 = Ec2Client.builder().region(region2).build();
@@ -316,4 +348,155 @@ public class AWS {
         System.out.println("[WARN] Manager state = " + state + ". Using it anyway...");
         return instanceId;
     }
+
+    public String[] receiveJobAsync(String queueName, int timeToWaitSeconds) {
+
+        String queueUrl;
+        try {
+            queueUrl = getQueueUrl(queueName);
+        } catch (RuntimeException e) {
+            System.out.println("[ERROR] couldn't receive message because - " + e.getMessage());
+            return null;
+        }
+
+        // Long polling: wait up to 10 seconds for a message
+        ReceiveMessageRequest req = ReceiveMessageRequest.builder()
+                .queueUrl(queueUrl)
+                .messageAttributeNames("All")
+                .maxNumberOfMessages(1)
+                .visibilityTimeout(30)
+                .waitTimeSeconds(timeToWaitSeconds)     // <-- THIS makes the thread sleep until a message arrives
+                .build();
+
+        ReceiveMessageResponse res = sqs.receiveMessage(req);
+
+        // No message found after waiting up to 10 seconds
+        if (res.messages().isEmpty()) {
+            return null;
+        }
+
+        Message msg = res.messages().get(0);
+
+        String fileKey = msg.body();
+
+        String responseQueue = null;
+        if (msg.messageAttributes().containsKey("responseQueue")) {
+            responseQueue = msg.messageAttributes()
+                    .get("responseQueue")
+                    .stringValue();
+        }
+
+        // Delete message so it doesn't return again
+        sqs.deleteMessage(DeleteMessageRequest.builder()
+                .queueUrl(queueUrl)
+                .receiptHandle(msg.receiptHandle())
+                .build());
+
+        return new String[]{fileKey, responseQueue};
+    }
+
+    public void uploadFileAndNotifyPc(String fileKey, Path filePath, String queueName) {
+        uploadFile(fileKey, filePath);
+        sendMessage(queueName, fileKey);
+    }
+
+    public List<String> createWorkerInstances(String userDataScript, int numberOfInstances) {
+
+        String userDataBase64 = Base64.getEncoder()
+                .encodeToString(userDataScript.getBytes());
+
+        RunInstancesRequest runRequest = RunInstancesRequest.builder()
+                .instanceType(InstanceType.M4_LARGE)          // as in your code
+                .imageId(ami)
+                .minCount(numberOfInstances)
+                .maxCount(numberOfInstances)
+                .keyName(keyName)
+                .iamInstanceProfile(IamInstanceProfileSpecification.builder()
+                        .name(instanceProfileName)
+                        .build())
+                .userData(userDataBase64)
+                // you can also attach tags at launch using TagSpecification (even cleaner):
+                .tagSpecifications(
+                        TagSpecification.builder()
+                                .resourceType(ResourceType.INSTANCE)
+                                .tags(
+                                        Tag.builder().key("Name").value("Worker").build(),
+                                        Tag.builder().key("Role").value("Worker").build()
+                                )
+                                .build()
+                )
+                .build();
+
+        RunInstancesResponse response = ec2.runInstances(runRequest);
+
+        List<String> instanceIds = new ArrayList<>();
+        for (Instance instance : response.instances()) {
+            instanceIds.add(instance.instanceId());
+        }
+
+        System.out.printf("[DEBUG] Started %d worker instance(s) based on AMI %s\n",
+                instanceIds.size(), ami);
+
+        return instanceIds;
+    }
+
+    /**
+     * Terminates all instances in the given list.
+     */
+    public void terminateInstances(List<String> instanceIds) {
+        if (instanceIds == null || instanceIds.isEmpty()) {
+            return;
+        }
+
+
+        TerminateInstancesRequest req = TerminateInstancesRequest.builder()
+                .instanceIds(instanceIds)
+                .build();
+
+        try {
+            ec2.terminateInstances(req);
+            System.out.println("[DEBUG] Terminating instances: " + instanceIds);
+        } catch (SdkException e) {
+            System.err.println("[ERROR] terminateInstances: " + e.getMessage());
+        }
+    }
+
+    /**
+     * (Optional) Helper – list all instances with Role=Worker.
+     * Useful if you ever want to recover state or terminate by role.
+     */
+    public List<String> listWorkerInstanceIdsByRole() {
+
+        DescribeInstancesRequest request = DescribeInstancesRequest.builder()
+                .filters(
+                        Filter.builder()
+                                .name("tag:Role")
+                                .values("Worker")
+                                .build(),
+                        Filter.builder()
+                                .name("instance-state-name")
+                                .values("pending", "running")
+                                .build()
+                )
+                .build();
+
+        List<String> result = new ArrayList<>();
+
+        DescribeInstancesResponse response;
+        String nextToken = null;
+        do {
+            response = ec2.describeInstances(request.toBuilder().nextToken(nextToken).build());
+
+            for (Reservation reservation : response.reservations()) {
+                for (Instance instance : reservation.instances()) {
+                    result.add(instance.instanceId());
+                }
+            }
+
+            nextToken = response.nextToken();
+        } while (nextToken != null);
+
+        return result;
+    }
+
 }
