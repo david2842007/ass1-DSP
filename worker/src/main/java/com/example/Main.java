@@ -44,9 +44,8 @@ public class Main {
                 Path inputFile = downloadFromUrl(job.url);
                 System.out.println("[WORKER] Downloaded input to " + inputFile);
 
-                // 4) (Stub) “analysis” – for now just copy with a header.
-                //    Later you’ll replace this with a Stanford Parser helper.
-                Path analysisFile = performStubAnalysis(job.analysisType, inputFile);
+                // 4) analyze the input file
+                Path analysisFile = StanfordAnalysis.performAnalysis(job.analysisType, inputFile);
                 System.out.println("[WORKER] Created analysis file " + analysisFile);
 
                 // 5) Upload analysis file to S3

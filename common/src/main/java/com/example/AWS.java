@@ -41,7 +41,7 @@ public class AWS {
         return instance;
     }
 
-    public String bucketName = "only-together2";
+    public String bucketName = "dsp-ass1-321856736937";
 
 
     // S3
