@@ -15,7 +15,7 @@ public class utils {
         AWS aws = AWS.getInstance();
         String[] body;
         do {
-            body = aws.receiveJob(queueName);
+            body = aws.receiveJobAsync(queueName, 10);
         } while (body == null);
         return body;
     }
