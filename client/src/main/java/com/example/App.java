@@ -28,6 +28,7 @@ public class App {
     final static String inputQueueName = "inputQueue";
     final static String outputQueueBaseName = "outputQueue";
     final static String flagsQueueName = "flagsQueue";
+    final static String numebrQueueName = "numberQueue";
 
     //flags
     final static String terminateFlag = "terminate";
@@ -43,8 +44,10 @@ public class App {
         final  Path  OutputPath = Paths.get(args[1]);
         final int n = Integer.parseInt(args[2]);
 
-        String ec2Script = buildUserDataScript();
-        String managerId = aws.ensureManagerIsRunning(ec2Script);
+
+
+        String ec2Script = buildManagerScript();
+        //String managerId = aws.ensureManagerIsRunning(ec2Script);
 
 
         String inputFile = aws.uploadFile("input" + System.currentTimeMillis() + ".txt" , InputPath);
@@ -54,6 +57,18 @@ public class App {
         aws.createSqsQueue(inputQueueName);
         aws.createSqsQueue(outputQueueName);
         aws.createSqsQueue(flagsQueueName);
+        aws.createSqsQueue(numebrQueueName);
+
+        if(n > 0){
+            aws.sendMessage(numebrQueueName, Integer.toString(n));
+        }
+
+        if(needTerminate(args)){
+            aws.sendMessage(flagsQueueName, "terminate");
+        }
+
+
+
 
 
         aws.sendJobMessage(inputQueueName, inputFile, outputQueueName);
@@ -61,10 +76,6 @@ public class App {
         System.out.println("Output location: " + outputLoc);
 
         aws.downloadFile(outputLoc, OutputPath);
-        if(needTerminate(args)){
-            aws.sendMessage(flagsQueueName, terminateFlag);
-        }
-
         aws.deleteQueue(outputQueueName);
 
 
@@ -104,6 +115,22 @@ public class App {
         return ""; // <-- inject your env variable
     }
     //waits 10sec before trying again.
+
+    private static String buildManagerScript() {
+        return """
+            #!/bin/bash
+
+            # Create manager directory
+            mkdir -p /opt/manager
+            cd /opt/manager
+
+            # Download manager.jar from S3
+            aws s3 cp s3://ass1-packages/manager.jar manager.jar
+
+            # Run the manager in background
+            nohup java -jar manager.jar >> manager.log 2>&1 &
+            """;
+    }
 
 
 

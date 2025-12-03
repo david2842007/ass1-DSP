@@ -174,8 +174,7 @@ class TaskState {
 
 public class ManagerMain {
 
-    //final static String localPath = "/home/ec2-user/";
-    final static String localPath = "C:\\git\\University\\distribuited_system\\ass1-DSP\\manager\\files";
+    final static String localPath = "/home/ec2-user/";
 
     final static AWS aws = AWS.getInstance();
 
@@ -185,39 +184,54 @@ public class ManagerMain {
     final static String flagsQueueName = "flagsQueue";
     final static String workersInputQueueName = "ass1-worker-queue";
     final static String workersOutputQueueName = "ass1-manager-queue";
+    final static String numebrQueueName = "numberQueue";
 
 
 
     static private final Map<String, TaskState> tasks = new ConcurrentHashMap<>(); //localPcs output queues name to
 
     private static volatile boolean terminate = false;
+    private static volatile boolean isInit = false;
 
 
     // how many messages per one worker EC2
-    final static int MESSAGES_PER_WORKER = 50;
+    static int MESSAGES_PER_WORKER = 50;
 
     // user-data script that runs WorkerMain on each worker EC2
     // (this is just an example, adjust to your jar/classpath)
-    static final String WORKER_USER_DATA_SCRIPT =
-            "#!/bin/bash\n" +
-                    "cd /home/ec2-user\n" +
-                    "java -jar WorkerMain.jar\n";
+    static final String WORKER_USER_DATA_SCRIPT = buildWorkerScript();
 
-    static final WorkersManager workersManager =
-            new WorkersManager(aws, MESSAGES_PER_WORKER, WORKER_USER_DATA_SCRIPT);
+
+    static WorkersManager workersManager;
+
 
 
     public static void main(String[] args){
         terminate = false;
+        isInit = false;
         aws.createSqsQueue(workersInputQueueName);
         aws.createSqsQueue(workersOutputQueueName);
 
         Thread pollerThread = new Thread(() -> {
+
+            while(!isInit){
+                String flag = aws.receiveOneMessage(numebrQueueName);
+                    if(isInteger(flag) && !isInit){
+                        MESSAGES_PER_WORKER =  Integer.parseInt(flag);
+                        workersManager =  new WorkersManager(aws, MESSAGES_PER_WORKER, WORKER_USER_DATA_SCRIPT);
+                        isInit = true;
+                        System.out.println("[DEBUG] WorkersManager: with ratio " + MESSAGES_PER_WORKER );
+                    }
+
+                }
+
             while(!terminate){
-                String[] message = aws.receiveJobAsync(inputQueueName, 1);//waits for the input file task.
                 String flag = aws.receiveOneMessage(flagsQueueName);
-                if(flag != null && flag.equals("terminate")){
-                    terminate = true;
+                String[] message = aws.receiveJobAsync(inputQueueName, 10);//waits for the input file task.
+                if(flag != null) {
+                    if (flag.equals("terminate")) {
+                        terminate = true;
+                    }
                 }
                 if(message != null){
                     String inputKey = message[0];
@@ -305,7 +319,7 @@ public class ManagerMain {
                     }
                 }
             }
-            //workersManager.terminateAll();
+            workersManager.terminateAll();
 
 
         }, "collectorThread");
@@ -353,6 +367,32 @@ public class ManagerMain {
         } catch (IOException e) {
             System.err.println("[ERROR] counting lines in " + path + ": " + e.getMessage());
             return 0;
+        }
+    }
+
+    private static String buildWorkerScript() {
+        return """
+            #!/bin/bash
+
+            # Create worker directory
+            mkdir -p /opt/worker
+            cd /opt/worker
+
+            # Download worker.jar from S3
+            aws s3 cp s3://ass1-packages/worker.jar worker.jar
+
+            # Run the worker in background
+            nohup java -jar worker.jar >> worker.log 2>&1 &
+            """;
+    }
+
+    public static boolean isInteger(String s) {
+        if (s == null) return false;
+        try {
+            Integer.parseInt(s);
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
         }
     }
 

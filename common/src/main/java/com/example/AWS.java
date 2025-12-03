@@ -19,7 +19,10 @@ public class AWS {
     private final SqsClient sqs;
     private final Ec2Client ec2;
 
-    public static String ami = "ami-00e95a9222311e8ed";
+    //public static String ami = "ami-00e95a9222311e8ed";
+    public static String ami = "ami-05eeee1aeb15ecde0";
+    public static String workerAmi = "ami-05eeee1aeb15ecde0";
+
 
     public static Region region1 = Region.US_WEST_2;
     public static Region region2 = Region.US_EAST_1;
@@ -64,7 +67,7 @@ public class AWS {
         }
     }
 
-    private String uploadFile(String bucket, String key, Path localPath) {
+    public String uploadFile(String bucket, String key, Path localPath) {
         PutObjectRequest putReq = PutObjectRequest.builder()
                 .bucket(bucket)
                 .key(key)
@@ -406,8 +409,8 @@ public class AWS {
                 .encodeToString(userDataScript.getBytes());
 
         RunInstancesRequest runRequest = RunInstancesRequest.builder()
-                .instanceType(InstanceType.M4_LARGE)          // as in your code
-                .imageId(ami)
+                .instanceType(InstanceType.T3_MICRO)          // as in your code
+                .imageId(workerAmi)
                 .minCount(numberOfInstances)
                 .maxCount(numberOfInstances)
                 .keyName(keyName)
@@ -435,7 +438,7 @@ public class AWS {
         }
 
         System.out.printf("[DEBUG] Started %d worker instance(s) based on AMI %s\n",
-                instanceIds.size(), ami);
+                instanceIds.size(), workerAmi);
 
         return instanceIds;
     }
